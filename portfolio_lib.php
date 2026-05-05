@@ -22,7 +22,42 @@ function portfolio_default_prefs(): array
         ],
         'hidden' => [],
         'customColumns' => [],
+        'rowOrder' => [],
     ];
+}
+
+/**
+ * Order $rows by prefs.rowOrder (array of position ids); unknown ids append in original order.
+ */
+function portfolio_sort_rows_by_prefs(array $rows, array $prefs): array
+{
+    $order = $prefs['rowOrder'] ?? null;
+    if (!is_array($order) || $order === []) {
+        return $rows;
+    }
+
+    $byId = [];
+    foreach ($rows as $r) {
+        $id = (int)($r['id'] ?? 0);
+        if ($id > 0) {
+            $byId[$id] = $r;
+        }
+    }
+
+    $out = [];
+    foreach ($order as $oid) {
+        $id = (int)$oid;
+        if ($id > 0 && isset($byId[$id])) {
+            $out[] = $byId[$id];
+            unset($byId[$id]);
+        }
+    }
+
+    foreach ($byId as $r) {
+        $out[] = $r;
+    }
+
+    return $out;
 }
 
 function portfolio_load_prefs(PDO $pdo, int $userId): array

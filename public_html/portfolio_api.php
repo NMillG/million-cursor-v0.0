@@ -70,6 +70,14 @@ function fetch_positions(PDO $pdo, int $userId): array
     return $rows;
 }
 
+function fetch_positions_sorted(PDO $pdo, int $userId): array
+{
+    $prefs = portfolio_load_prefs($pdo, $userId);
+    $rows = fetch_positions($pdo, $userId);
+
+    return portfolio_sort_rows_by_prefs($rows, $prefs);
+}
+
 function merge_extras(array $existing, array $incoming): array
 {
     $reserved = [
@@ -135,7 +143,7 @@ try {
             'ok' => true,
             'user_id' => $targetUserId,
             'prefs' => $prefs,
-            'rows' => fetch_positions($pdo, $targetUserId),
+            'rows' => portfolio_sort_rows_by_prefs(fetch_positions($pdo, $targetUserId), $prefs),
             'tiingo' => TIINGO_API_KEY !== '',
         ]);
     }
@@ -152,7 +160,7 @@ try {
 
     if ($action === 'refresh_prices') {
         portfolio_refresh_prices($pdo, $targetUserId);
-        json_out(200, ['ok' => true, 'rows' => fetch_positions($pdo, $targetUserId)]);
+        json_out(200, ['ok' => true, 'rows' => fetch_positions_sorted($pdo, $targetUserId)]);
     }
 
     if ($action === 'create_row') {
@@ -192,7 +200,7 @@ try {
         ]);
 
         portfolio_refresh_prices($pdo, $targetUserId);
-        json_out(200, ['ok' => true, 'rows' => fetch_positions($pdo, $targetUserId)]);
+        json_out(200, ['ok' => true, 'rows' => fetch_positions_sorted($pdo, $targetUserId)]);
     }
 
     if ($action === 'update_row') {
@@ -253,7 +261,7 @@ try {
         ]);
 
         portfolio_refresh_prices($pdo, $targetUserId);
-        json_out(200, ['ok' => true, 'rows' => fetch_positions($pdo, $targetUserId)]);
+        json_out(200, ['ok' => true, 'rows' => fetch_positions_sorted($pdo, $targetUserId)]);
     }
 
     if ($action === 'delete_row') {
@@ -263,7 +271,7 @@ try {
         }
         $stmt = $pdo->prepare('DELETE FROM portfolio_positions WHERE id = :id AND user_id = :user_id');
         $stmt->execute(['id' => $id, 'user_id' => $targetUserId]);
-        json_out(200, ['ok' => true, 'rows' => fetch_positions($pdo, $targetUserId)]);
+        json_out(200, ['ok' => true, 'rows' => fetch_positions_sorted($pdo, $targetUserId)]);
     }
 
     if ($action === 'add_custom_column') {
@@ -320,7 +328,7 @@ try {
             $upd->execute(['extra_json' => $json, 'id' => (int)$r['id'], 'user_id' => $targetUserId]);
         }
 
-        json_out(200, ['ok' => true, 'prefs' => portfolio_load_prefs($pdo, $targetUserId), 'rows' => fetch_positions($pdo, $targetUserId)]);
+        json_out(200, ['ok' => true, 'prefs' => portfolio_load_prefs($pdo, $targetUserId), 'rows' => fetch_positions_sorted($pdo, $targetUserId)]);
     }
 
     json_out(400, ['ok' => false, 'error' => 'Unknown action']);

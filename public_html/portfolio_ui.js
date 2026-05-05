@@ -2,7 +2,6 @@
 
 const RESERVED = new Set([
   "rownum",
-  "_actions",
   "_draft",
   "id",
   "ticker",
@@ -19,6 +18,26 @@ const RESERVED = new Set([
   "extras",
   "price_updated_at",
 ]);
+
+let portfolioRowMenuEl = null;
+
+function closePortfolioRowMenu() {
+  if (portfolioRowMenuEl) {
+    portfolioRowMenuEl.remove();
+    portfolioRowMenuEl = null;
+  }
+  document.removeEventListener("keydown", onPortfolioRowMenuEscape);
+}
+
+function onPortfolioRowMenuEscape(e) {
+  if (e.key === "Escape") closePortfolioRowMenu();
+}
+
+function onDocMouseDownPortfolioMenu(e) {
+  if (portfolioRowMenuEl && !portfolioRowMenuEl.contains(e.target) && !e.target.closest(".portfolio-row-menu-btn")) {
+    closePortfolioRowMenu();
+  }
+}
 
 function money2(v) {
   if (v === null || v === undefined || Number.isNaN(v)) return "";
@@ -78,7 +97,29 @@ async function api(action, payload = {}, withCsrf = true) {
 function baseColumnDefs(readOnly) {
   const ro = !!readOnly;
   return {
-    ticker: { title: "Ticker Symbol", field: "ticker", editor: ro ? false : "input", headerSort: false, widthGrow: 1, minWidth: 110 },
+    ticker: {
+      title: "Ticker Symbol",
+      field: "ticker",
+      editor: ro ? false : "input",
+      headerSort: false,
+      widthGrow: 1,
+      minWidth: 140,
+      formatter: function (cell) {
+        const raw = cell.getValue();
+        const value = raw === null || raw === undefined ? "" : String(raw);
+        if (ro) return value;
+        const menuBtn = '<button type="button" class="portfolio-row-menu-btn" aria-label="Row menu" aria-haspopup="true">⋮</button>';
+        const safe = value.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+        return `<span class="portfolio-row-gutter">${menuBtn}<span class="portfolio-row-ticker">${safe}</span></span>`;
+      },
+      cellClick: function (e, cell) {
+        if (ro) return;
+        const btn = e.target && e.target.closest ? e.target.closest(".portfolio-row-menu-btn") : null;
+        if (!btn) return;
+        e.stopPropagation();
+        openPortfolioRowMenu(btn, cell.getRow());
+      },
+    },
     shares: { title: "Number of Shares", field: "shares", editor: ro ? false : "number", headerSort: false, widthGrow: 1, minWidth: 120, mutator: (v, d) => { d.shares = Number(v); return d.shares; }, mutatorEdit: (v, d) => { d.shares = Number(v); return computeDerived(d).shares; } },
     cost_per_share: { title: "Cost per share ($)", field: "cost_per_share", editor: ro ? false : "number", headerSort: false, widthGrow: 1, minWidth: 130, mutatorEdit: (v, d) => { d.cost_per_share = Number(v); return computeDerived(d).cost_per_share; } },
     current_price: { title: "Current share price ($)", field: "current_price", editor: false, headerSort: false, widthGrow: 1, minWidth: 140, formatter: (c) => money2(c.getValue()) },
@@ -109,26 +150,89 @@ function buildEmptyDraft(prefs) {
   return computeDerived({ ...row });
 }
 
+function openPortfolioRowMenu(anchorBtn, row) {
+  closePortfolioRowMenu();
+  const d = row.getData();
+  const menu = document.createElement("div");
+  menu.className = "portfolio-row-menu-dropdown";
+  menu.setAttribute("role", "menu");
+
+  function addItem(label, fn, danger) {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = danger ? "portfolio-row-menu-item portfolio-row-menu-item-danger" : "portfolio-row-menu-item";
+    b.setAttribute("role", "menuitem");
+    b.textContent = label;
+    b.addEventListener("click", (ev) => {
+      ev.stopPropagation();
+      closePortfolioRowMenu();
+      fn();
+    });
+    menu.appendChild(b);
+  }
+
+  if (d._draft) {
+    addItem("Save", () => void saveDraftRow(row));
+    addItem("Cancel", () => row.delete());
+  } else {
+    addItem("Move up", () => moveRowByDelta(row, -1));
+    addItem("Move down", () => moveRowByDelta(row, 1));
+    addItem("Delete", () => void deletePersistedRow(row), true);
+  }
+
+  document.body.appendChild(menu);
+  portfolioRowMenuEl = menu;
+
+  const rect = anchorBtn.getBoundingClientRect();
+  const mw = 200;
+  menu.style.position = "fixed";
+  menu.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - mw - 8))}px`;
+  menu.style.top = `${rect.bottom + 4}px`;
+  menu.style.zIndex = "10050";
+  menu.style.minWidth = `${mw}px`;
+
+  document.addEventListener("mousedown", onDocMouseDownPortfolioMenu, true);
+  document.addEventListener("keydown", onPortfolioRowMenuEscape);
+}
+
+function moveRowByDelta(row, delta) {
+  if (!table) return;
+  const rows = table.getRows();
+  const i = rows.indexOf(row);
+  if (i < 0) return;
+  const j = i + delta;
+  if (j < 0 || j >= rows.length) return;
+  const data = table.getData();
+  const tmp = data[i];
+  data[i] = data[j];
+  data[j] = tmp;
+  table.setData(data);
+  void persistRowOrder();
+}
+
+async function persistRowOrder() {
+  if (!table || window.PORTFOLIO_CTX.readOnly) return;
+  const ids = [];
+  for (const r of table.getRows()) {
+    const d = r.getData();
+    if (d._draft) continue;
+    const id = Number(d.id);
+    if (Number.isFinite(id) && id > 0) ids.push(id);
+  }
+  latestPrefs = { ...(latestPrefs || {}), rowOrder: ids };
+  try {
+    await api("save_prefs", { prefs: latestPrefs });
+  } catch (err) {
+    window.alert(err && err.message ? err.message : String(err));
+  }
+}
+
 function buildColumnsFromPrefs(prefs, readOnly) {
   const defs = baseColumnDefs(readOnly);
   const order = Array.isArray(prefs.columnOrder) ? prefs.columnOrder : [];
   const hidden = new Set(Array.isArray(prefs.hidden) ? prefs.hidden : []);
 
-  const cols = [
-    {
-      title: "#",
-      field: "rownum",
-      formatter: "rownum",
-      hozAlign: "center",
-      headerSort: false,
-      width: 50,
-      frozen: true,
-      movable: false,
-    },
-  ];
-
-  const ac = actionsColumnDef(readOnly);
-  if (ac) cols.push(ac);
+  const cols = [];
 
   for (const field of order) {
     if (!defs[field]) continue;
@@ -165,9 +269,13 @@ function prefsFromTable(table, existingPrefs) {
   for (const col of cols) {
     const def = col.getDefinition();
     const field = def.field;
-    if (!field || field === "rownum" || field === "_actions") continue;
+    if (!field) continue;
     prefs.columnOrder.push(field);
     if (!col.isVisible()) prefs.hidden.push(field);
+  }
+
+  if (Array.isArray(existingPrefs.rowOrder)) {
+    prefs.rowOrder = existingPrefs.rowOrder;
   }
 
   return prefs;
@@ -199,6 +307,7 @@ async function saveDraftRow(row) {
       extras,
     });
     await table.replaceData(resp.rows.map((r) => computeDerived({ ...r })));
+    void persistRowOrder();
   } catch (err) {
     window.alert(err && err.message ? err.message : String(err));
   }
@@ -214,56 +323,10 @@ async function deletePersistedRow(row) {
   try {
     const resp = await api("delete_row", { id: rowId });
     await table.replaceData(resp.rows.map((r) => computeDerived({ ...r })));
+    void persistRowOrder();
   } catch (err) {
     window.alert(err && err.message ? err.message : String(err));
   }
-}
-
-function actionsColumnDef(readOnly) {
-  if (readOnly) return null;
-  return {
-    title: "",
-    field: "_actions",
-    width: 152,
-    minWidth: 132,
-    maxWidth: 180,
-    frozen: true,
-    headerSort: false,
-    resizable: false,
-    movable: false,
-    headerMenu: [],
-    hozAlign: "center",
-    vertAlign: "middle",
-    formatter: function (cell) {
-      const d = cell.getRow().getData();
-      if (d._draft) {
-        return (
-          '<span class="portfolio-row-actions">' +
-          '<button type="button" class="portfolio-inline-btn portfolio-inline-btn-save">Save</button>' +
-          '<button type="button" class="portfolio-inline-btn portfolio-inline-btn-cancel">Cancel</button>' +
-          "</span>"
-        );
-      }
-      return (
-        '<span class="portfolio-row-actions">' +
-        '<button type="button" class="portfolio-inline-btn portfolio-inline-btn-del">Delete</button>' +
-        "</span>"
-      );
-    },
-    cellClick: function (e, cell) {
-      e.stopPropagation();
-      const btn = e.target && e.target.closest ? e.target.closest("button") : null;
-      if (!btn) return;
-      const row = cell.getRow();
-      if (btn.classList.contains("portfolio-inline-btn-save")) {
-        void saveDraftRow(row);
-      } else if (btn.classList.contains("portfolio-inline-btn-cancel")) {
-        row.delete();
-      } else if (btn.classList.contains("portfolio-inline-btn-del")) {
-        void deletePersistedRow(row);
-      }
-    },
-  };
 }
 
 async function persistPrefs(table, prefs) {
@@ -301,33 +364,21 @@ async function loadAll() {
     : "Live prices: unavailable (missing TIINGO_API_KEY or blocked outbound HTTPS)";
 
   if (!table) {
+    const readOnly = window.PORTFOLIO_CTX.readOnly;
     table = new Tabulator("#portfolioGrid", {
       height: "min(70vh, 720px)",
       layout: "fitColumns",
       movableColumns: true,
+      movableRows: !readOnly,
+      movableRowsHandle: false,
       reactiveData: true,
       placeholder: "No positions yet. Click “Add ticker” to enter a full row, then Save.",
-      columns: buildColumnsFromPrefs(resp.prefs, window.PORTFOLIO_CTX.readOnly),
+      columns: buildColumnsFromPrefs(resp.prefs, readOnly),
       rowFormatter: function (row) {
         const el = row.getElement();
         if (row.getData()._draft) el.classList.add("portfolio-row-draft");
         else el.classList.remove("portfolio-row-draft");
       },
-      rowContextMenu: window.PORTFOLIO_CTX.readOnly
-        ? false
-        : [
-            {
-              label: "Delete row",
-              action: async function (e, row) {
-                const d = row.getData();
-                if (d._draft) {
-                  row.delete();
-                  return;
-                }
-                await deletePersistedRow(row);
-              },
-            },
-          ],
       columnDefaults: {
         headerMenu: [
           {
@@ -347,7 +398,7 @@ async function loadAll() {
       if (window.PORTFOLIO_CTX.readOnly) return;
       const row = cell.getRow();
       const field = cell.getField();
-      if (!field || field === "rownum" || field === "_actions") return;
+      if (!field) return;
 
       const d = row.getData();
       if (d._draft) {
@@ -355,10 +406,8 @@ async function loadAll() {
         return;
       }
 
-      // recompute derived fields client-side for snappy UI
       computeDerived(row.getData());
 
-      // persist server-side (also refreshes Tiingo-derived current price server-side on update flow)
       const rowsData = await updateRowRemote(row);
       await table.replaceData(rowsData.map((r) => computeDerived({ ...r })));
     });
@@ -370,14 +419,19 @@ async function loadAll() {
       await persistPrefs(table, prefs);
     });
 
-    if (!window.PORTFOLIO_CTX.readOnly) {
+    table.on("rowMoved", function () {
+      closePortfolioRowMenu();
+      void persistRowOrder();
+    });
+
+    if (!readOnly) {
       document.getElementById("btnRefreshPrices").addEventListener("click", async () => {
         const resp2 = await api("refresh_prices");
         await table.replaceData(resp2.rows.map((r) => computeDerived({ ...r })));
       });
 
       document.getElementById("btnAddTicker").addEventListener("click", () => {
-        if (!table || window.PORTFOLIO_CTX.readOnly) return;
+        if (!table) return;
         const rows = table.getRows();
         for (let i = 0; i < rows.length; i += 1) {
           if (rows[i].getData()._draft) {

@@ -1,0 +1,70 @@
+nMillion — cPanel deployment (quick setup)
+========================================
+
+1) Upload & extract
+-------------------
+- Upload this ZIP to cPanel File Manager.
+- Extract into your domain's document root, usually:
+  public_html/
+- After extract you should see index.php, login.php, portfolio.php, assets/, etc. directly under public_html/
+
+2) PHP version
+--------------
+- In cPanel → MultiPHP Manager: select PHP 8.2+ (recommended; app uses modern PHP features).
+
+3) MySQL database
+-----------------
+A) Create database and user (cPanel)
+   - cPanel → MySQL® Databases → MySQL Databases.
+   - New Database: enter a short name (e.g. nmillion) → Create Database.
+     Full name will be like: yourcpanel_nmillion — copy it exactly.
+   - MySQL Users → create username + strong password → Create User.
+   - Add User To Database → choose user + database → ALL PRIVILEGES → Make Changes.
+
+B) Create tables (optional; app can auto-create on first visit)
+   - cPanel → phpMyAdmin → click your database in the left list.
+   - SQL tab (or Import) → run sql/nmillion_schema.sql from this site package
+     (same statements as db.php migrations).
+
+C) Point the app at MySQL
+   - Edit config.php: MYSQL_HOST (often localhost), MYSQL_PORT (3306),
+     MYSQL_DATABASE (full prefixed name), MYSQL_USERNAME, MYSQL_PASSWORD,
+     APP_BASE_URL (https://yourdomain.com with no trailing slash).
+
+D) reCAPTCHA (register, login, forgot password)
+   - Keys are created only in your Google account: https://www.google.com/recaptcha/admin
+   - Create a v2 site → type: "I'm not a robot" Checkbox (not v3).
+   - Domains: nmillion.com and www.nmillion.com (add staging if needed).
+   - Set RECAPTCHA_SITE_KEY and RECAPTCHA_SECRET_KEY via cPanel environment UI,
+     or in .htaccess with SetEnv (PHP reads getenv and $_SERVER).
+   - Site key and secret must be from the same reCAPTCHA registration.
+   - If validation still fails: upload the latest auth.php/config.php (uses cURL
+     when allow_url_fopen is Off). Temporarily set env RECAPTCHA_DEBUG=1 and check
+     cPanel Errors / error_log for lines starting with "reCAPTCHA" (then unset).
+   - Google error-codes often mean: wrong secret, domain not listed for the site
+     key, or hostname mismatch (http vs https).
+
+4) Tiingo (optional but recommended for live prices)
+----------------------------------------------------
+- Set TIINGO_API_KEY for your hosting environment (preferred), OR temporarily put the key in config.php via env_or fallback pattern.
+- If outbound HTTPS or allow_url_fopen is blocked, market/portfolio live pricing may fall back.
+
+5) Admin access (optional)
+--------------------------
+- Set ADMIN_EMAILS in environment to a comma-separated list of admin emails.
+- Admin pages:
+  admin_users.php
+  admin_rates.php
+
+6) File permissions
+-------------------
+- Ensure PHP can write:
+  public_html/rates.json  (admin rate editor)
+
+7) Verify
+---------
+- Visit your domain: /
+- Login: /login.php
+- Portfolio: /portfolio.php
+
+If anything fails, check cPanel Errors (Apache/PHP) and confirm DB credentials in config.php.
